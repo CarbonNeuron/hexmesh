@@ -1,7 +1,82 @@
-﻿@page "/"
+@page "/"
+@rendermode InteractiveServer
+@using HexMesh.Core.Coordinates
+@using HexMesh.Core.Simulation
+@using HexMesh.Core.Storage
+@using HexMesh.Server.Components
+@using HexMesh.Server.Services
+@using HexMesh.Server.Simulation
 
-<PageTitle>Home</PageTitle>
+<div style="display: flex; flex-direction: column; height: 100vh; overflow: hidden;">
+    <div style="padding: 8px 16px; background: #16213e; border-bottom: 1px solid #2a2a4a; display: flex; align-items: center; gap: 12px;">
+        <h3 style="margin: 0; color: #e0e0e0; font-size: 16px;">HexMesh</h3>
+        <button @onclick="Step" disabled="@_stepping" style="padding: 6px 16px; background: #0f3460; color: #e0e0e0; border: 1px solid #2a2a4a; border-radius: 4px; cursor: pointer;">
+            Step
+        </button>
+        <span style="color: #888; font-size: 13px;">Generation: @_generation</span>
+        <span style="color: #888; font-size: 13px;">Cells: @_cellCount</span>
+    </div>
+    <div style="flex: 1; overflow: hidden;">
+        <HexCanvas @ref="_canvas" Storage="_storage" OnChunkSubscriptionsChangedCallback="HandleChunkSubscriptions" />
+    </div>
+</div>
 
-<h1>Hello, world!</h1>
+@code {
+    private SparseWorldStorage<GameOfLifeCell> _storage = new();
+    private SimulationEngine<GameOfLifeCell> _engine = null!;
+    private ChunkSubscriptionManager _chunkManager = new();
+    private HexCanvas _canvas = null!;
+    private int _generation = 0;
+    private int _cellCount = 0;
+    private bool _stepping = false;
 
-Welcome to your new app.
+    protected override void OnInitialized()
+    {
+        var simulation = new GameOfLifeSimulation();
+        _engine = new SimulationEngine<GameOfLifeCell>(_storage, simulation);
+
+        SeedPattern();
+        _cellCount = _storage.GetAllCells().Count();
+    }
+
+    private void SeedPattern()
+    {
+        var coords = new[]
+        {
+            new HexCoord(0, 0),
+            new HexCoord(1, 0),
+            new HexCoord(-1, 0),
+            new HexCoord(0, 1),
+            new HexCoord(0, -1),
+            new HexCoord(1, -1),
+            new HexCoord(-1, 1),
+        };
+
+        foreach (var coord in coords)
+            _storage.Set(coord, new GameOfLifeCell(true));
+    }
+
+    private async Task Step()
+    {
+        _stepping = true;
+        try
+        {
+            var changes = await _engine.StepAsync();
+            _generation++;
+            _cellCount = _storage.GetAllCells().Count();
+
+            var filtered = _chunkManager.FilterChanges(changes);
+            await _canvas.ApplyDeltasAsync(filtered);
+        }
+        finally
+        {
+            _stepping = false;
+        }
+    }
+
+    private void HandleChunkSubscriptions((List<ChunkCoord> Subscribe, List<ChunkCoord> Unsubscribe) args)
+    {
+        _chunkManager.Subscribe(args.Subscribe);
+        _chunkManager.Unsubscribe(args.Unsubscribe);
+    }
+}
